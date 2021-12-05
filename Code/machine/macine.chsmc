@@ -1,0 +1,257 @@
+// CHSM
+#include <chsm.h>
+
+// STANDARD
+#include <iostream>
+#include <cctype>
+#include <iomanip>
+
+// THREAD
+#include <future>
+#include <thread>
+
+// STL
+#include <vector>
+
+// DEFINE
+#define UV_SENSOR_FUNC              true
+#define UV_SENSOR_MAL_FUNC          false
+#define CT_SENSOR_FUNC_L            true
+#define CT_SENSOR_MAL_FUNC_L        false
+#define CT_SENSOR_FUNC_R            true
+#define CT_SENSOR_MAL_FUNC_R        false
+
+#define MAX_MOTOR_RANGE             10000
+
+using namespace std;
+
+class machine_data : public CHSM:machine { 
+public:
+    machine_data(CHSM_MACHINE_ARGS) : CHSM:machine(CHSM_MACHINE_INIT){ }
+
+    // operate function
+    void initialize();
+    void oper_motor(int distance);
+    void all_stop();
+    
+    // get data from sensor
+    bool get_UV_Data();
+    bool get_Left_CT_Data();
+    bool get_Right_CT_Data();
+
+    //select
+    void selection();
+
+protected:
+    unsigned int cnt_wipe_log;
+};
+
+void machine_data::initialize(){
+    /* initialize the system */
+}
+
+void machine_data::oper_motor(int distance){
+    /* operate the motor*/
+}
+
+void machine_data::all_stop(){
+    /* all stop (all stop) */
+}
+
+bool machine_data::get_UV_Data(promise<bool>* p){
+    
+    p->get_value(UV_SENSOR_FUNC);
+}
+
+bool machine_data::get_Left_CT_Data(promise<bool>* p){
+
+    p->get_value(CT_SENSOR_FUNC_L)
+}
+
+bool machine_data::get_Right_CT_Data(promise<bool>* p){
+
+    p->get_value(CT_SENSOR_FUNC_R)
+}
+
+void machine::selection(){
+    char ch; cin >> ch;
+    switch (toupper(ch)){
+        case 'M' mach.go_manual_wipe(); break;
+        case 'R' mach.go_right(); break;
+        case 'L' mach.go_left(); break;
+        case 'O' mach.go_oper(); break;
+        case 'F' mach.force_stop(); break;
+        case 'N' mach.finish(); break;
+        case 'S' mach.go_stop(); break;
+        case 'R' mach.go_replacement(); break;
+    } // switch
+}
+
+%%
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+chsm<machine_data> machine is {
+
+    /******************************************/
+    /********** STATE SPECIFICATIONS **********/
+    /******************************************/
+
+    set machine(operational, action , stop) is {
+            
+        cluster operational(idle, replacement) history {
+            force_stop->emergency;
+        } is {
+            
+            state idle {
+                upon enter %{
+                    cout << "MACHINE OPERATE BEGIN!!...\n";
+                    initialize();
+                %}
+
+                go_auto_wipe -> auto_wipe;
+                go_manual_wipe -> manual_wipe;
+                go_replacement -> replacement;
+            } // state idle
+
+            state replacement {
+                upon enter %{
+                    cout << MACHINE REPLACEMENT BEGIN!...\n";
+                    all_stop();
+                %}
+                finish->idle;
+            } // state replacement
+
+        } // cluster operational
+
+
+        cluster action(auto_wipe, manual_wipe, emergency) history {
+            go_oper->operational;
+            force_stop->emergency;
+        } is {
+
+            cluster auto_wipe(a_stop, a_right, a_left) histroy {
+                upon enter %{
+                    cout << "AUTO_WIPE STATE BEGIN!!...\n";    
+                %}
+
+                upon exit %{
+                    ++cnt_wipe_log;    
+                %}
+                go_manual_wipe->manual_wipe;
+            } is {
+            
+                state a_stop {
+                    go_left[get_Left_CT_Data()]->a_left;
+                    go_right[get_Right_CT_Data()]->a_right;
+                    go_manual_wipe[get_Left_CT_Data() && get_Right_CT_Data()]->manual_wipe;
+                    // operational로 가는  트렌지션
+                }
+
+                state a_right {
+                    upon enter %{
+                        oper_motor(MAX_MOTOR_RANGE);
+                    %}
+                    go_stop[get_Right_CT_Data()]->a_stop;
+                    go_manual_wipe[!get_Right_CT_Data()]->manual_wipe %{
+                        cout << "wiper do not reach the side\n";
+                    %}
+                } // a_right
+
+                state a_left {
+                    upon enter %{
+                        oper_motor(MAX_MOTOR_RANGE);
+                    %}
+                    go_stop[get_Left_CT_Data()]->a_stop;
+                    go_manual_wipe[!get_Left_CT_Data()]->manual_wipe %{
+                        cout << "wiper do not reach the side\n";
+                    %}                   
+                } // a_left
+
+            } // cluster auto_wipe
+    
+            cluster manual_wipe(m_stop, m_right, m_left) history {
+                upon enter %{
+                    cout << "manual_wipe STATE BEGIN!!..\n";    
+                %}
+            } is {
+                state m_stop {
+                    go_right->m_right;
+                    go_left->m_left;
+                } // m_stop
+
+                state m_right {
+                    upon enter%{
+                        oper_motor(MAX_MOTOR_RANGE);        
+                    %}
+                    go_stop[get_Right_CT_Data()]->m_stop;
+                    force_stop[!get_Right_CT_Data()]->emergency;
+                } // m_right
+
+                state m_left {
+                    upon enter %{
+                        oper_motor(MAX_MOTOR_RANGE);
+                    %}
+                    go_stop[get_Left_CT_Data()]->m_stop;
+                    force_stop[!get_Left_CT_Data()]->emergency;
+                } // m_left
+
+            } // cluster manual_wipe
+
+            state emergency {
+                upon enter %{
+                    cout << "EMERGENCY STATE BEGIN!!..\n";
+                    all_stop();
+                %}
+                finish->replacement;
+            } // emergency
+
+        } // cluster action
+                                                                                                                                                                                                                                             .
+}
+
+%%
+/////////////////////////////////////////////////////////////////////
+int main(void)
+{   
+    machine mach;
+
+#ifdef DEBUG
+    mach.debug(CHSM::machine::DEBUG_ALL);
+#endif
+
+    mach.enter();
+    vector<thread> threads;
+    bool uv_flag, r_ct_flag, l_ct_flag;
+    char itr;
+    
+    while(){    
+        promise<bool> uv_ret;
+        promise<bool> l_ct_ret;
+        promise<bool> r_ct_ret;
+
+        future<bool> uv_data = uv_ret.get_future();
+        future<bool> l_ct_data = l_ct_ret.get_future();
+        future<bool> r_ct_data = r_ct_ret.get_future();
+
+        threads.push_back(thread(get_UV_Data, &uv_data));
+        threads.push_back(thread(get_Left_CT_Data, &l_ct_ret));
+        threads.push_back(thread(get_Right_CT_Data, & r_ct_ret));
+        threads.push_back(thread(selection);
+
+        uv_data.wait();
+        l_ct_data.wait();
+        r_ct_data.wait();
+
+        uv_flag = uv_data.get();
+        l_ct_flag = l_ct_data.get();
+        r_ct_flag = r_ct_data.get();
+
+        cout << "UV_CHECK : " << uv_flag << " ";
+        cout << "L_CT_CHECK : " << l_ct_flag << " ";
+        cout << "R_CT_CHECK : " >> r_ct_flag << "\n";
+        
+        if(l_ct_flag == false || r_ct_flag == false){
+            mach.go_auto_wipe();
+        }
+    }  // while
+}

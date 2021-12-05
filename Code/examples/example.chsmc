@@ -1,0 +1,64 @@
+#include <iostream>
+using namespace std;
+
+class light_data : public CHSM::machine {
+public: 
+    light_data(CHSM_MACHINE_ARGS) : CHSM::machine(CHSM_MACHINE_INIT), flag_(1) { }
+    
+    int flag() const{
+        return flag_;
+    }
+
+protected:
+    int flag_;
+};
+
+%%
+chsm<light_data> light is {
+    
+    event turn_off() %{
+        flag_ = 0;
+        cout << "turning off...\n";
+    %}
+
+    event turn_on() %{
+        flag_ = 1;
+        cout << "turing on...\n;
+    %}
+
+    state on {
+        upon enter %{
+            cout << "turn on the light\n";
+        %}
+        turn_off -> off;
+    }
+    
+    state off{
+        upon enter %{
+            cout << "turn off the light\n;
+        %}
+        turn_on -> on; 
+    }
+}
+%%
+
+int main(void){
+    light light;
+
+#ifdef DEBUG
+    light.debug(CHSM::machine::DEBUG_ALL);
+#endif
+
+    light.enter();
+
+    while(!cin.eof()){
+        cout << "Light Switch\n";
+        cout << "PRESS 1 TO SWITCH\n";
+
+        char buf;
+        cin >> buf;
+        if(flag_ == 1){light.turn_off();}
+        else(flag_ == 0){light.turn_on();}
+    }
+    return 0;
+}
